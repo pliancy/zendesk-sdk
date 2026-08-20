@@ -19,9 +19,13 @@ export class UserIdentities {
     }
 
     async create(userId: number, identity: UserIdentity): Promise<UserIdentity> {
+        const { skip_verify_email, ...identityFields } = identity
         const { data } = await this.http.post<{ identity: UserIdentity }>(
             `/users/${userId}/identities.json`,
-            { identity },
+            {
+                identity: identityFields,
+                ...(skip_verify_email !== undefined ? { skip_verify_email } : {}),
+            },
         )
         return data.identity
     }

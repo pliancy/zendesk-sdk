@@ -55,7 +55,6 @@ describe('UserIdentities', () => {
                 type: 'email',
                 value: 'jane.alias@example.com',
                 verified: true,
-                skip_verify_email: true,
             }
             jest.spyOn(mockAxios, 'post').mockResolvedValue({
                 data: { identity: { ...identity, id: 2, user_id: 10 } },
@@ -67,6 +66,42 @@ describe('UserIdentities', () => {
                 user_id: 10,
             })
             expect(mockAxios.post).toHaveBeenCalledWith('/users/10/identities.json', { identity })
+        })
+
+        it('sends skip_verify_email as a top-level body field', async () => {
+            const identity: UserIdentity = {
+                type: 'email',
+                value: 'jane.alias@example.com',
+                verified: true,
+                skip_verify_email: true,
+            }
+            jest.spyOn(mockAxios, 'post').mockResolvedValue({
+                data: {
+                    identity: {
+                        type: identity.type,
+                        value: identity.value,
+                        verified: identity.verified,
+                        id: 2,
+                        user_id: 10,
+                    },
+                },
+            })
+
+            await expect(userIdentities.create(10, identity)).resolves.toEqual({
+                type: 'email',
+                value: 'jane.alias@example.com',
+                verified: true,
+                id: 2,
+                user_id: 10,
+            })
+            expect(mockAxios.post).toHaveBeenCalledWith('/users/10/identities.json', {
+                identity: {
+                    type: 'email',
+                    value: 'jane.alias@example.com',
+                    verified: true,
+                },
+                skip_verify_email: true,
+            })
         })
     })
 
