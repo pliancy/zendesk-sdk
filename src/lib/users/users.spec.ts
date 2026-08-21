@@ -26,6 +26,23 @@ describe('Users', () => {
                 user: { name: 'Jane Doe', email: 'jane@example.com' },
             })
         })
+
+        it('sends skip_verify_email as a top-level body field', async () => {
+            jest.spyOn(mockAxios, 'post').mockResolvedValue({ data: { user: mockUser } })
+
+            await expect(
+                users.createOrUpdate({
+                    name: 'Jane Doe',
+                    email: 'jane@example.com',
+                    verified: true,
+                    skip_verify_email: true,
+                }),
+            ).resolves.toEqual(mockUser)
+            expect(mockAxios.post).toHaveBeenCalledWith('/users/create_or_update.json', {
+                user: { name: 'Jane Doe', email: 'jane@example.com', verified: true },
+                skip_verify_email: true,
+            })
+        })
     })
 
     describe('update', () => {
