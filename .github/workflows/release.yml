@@ -34,15 +34,3 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: yarn semantic-release
-      # Commit changes to package.json and README.md
-      - name: Auto Commit
-        uses: stefanzweifel/git-auto-commit-action@v7
-        env:
-          SKIP_COMMITIZEN: true
-        with:
-          commit_message: ${{ github.event.head_commit.message }} [skip ci]
-          commit_options: '--no-verify'
-          file_pattern: package.json
-          skip_dirty_check: true
-          skip_fetch: true
-          push_options: --force-with-lease
