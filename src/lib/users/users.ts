@@ -7,9 +7,13 @@ export class Users {
     constructor(private readonly http: AxiosInstance) {}
 
     async createOrUpdate(user: User): Promise<User> {
+        const { skip_verify_email, ...userFields } = user
         const { data } = await this.http.post<{ user: User }>(
             `${this.baseUrl}/create_or_update.json`,
-            { user },
+            {
+                user: userFields,
+                ...(skip_verify_email !== undefined ? { skip_verify_email } : {}),
+            },
         )
         return data.user
     }
