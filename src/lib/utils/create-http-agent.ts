@@ -1,38 +1,10 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig } from 'axios'
-import {
-    ZendeskBasicConfig,
-    ZendeskConfig,
-    ZendeskOAuthConfig,
-    resolveZendeskAuthMode,
-} from '../zendesk.types'
+import { ZendeskBasicConfig, ZendeskConfig, resolveZendeskAuth } from '../zendesk.types'
 import { createClientCredentialsTokenSource } from './client-credentials-token'
 
-const INVALID_CONFIG_MESSAGE =
-    'ZendeskConfig must provide clientId, clientSecret, and scope, or both username and password for Basic auth'
-
-const OAUTH_FIELDS_MESSAGE =
-    'ZendeskConfig client credentials require clientId, clientSecret, and scope'
-
 type RetriableRequestConfig = InternalAxiosRequestConfig & {
+    zendeskAccessToken?: string
     zendeskAuthRetried?: boolean
-}
-
-function hasOAuthField(config: ZendeskConfig): boolean {
-    return 'clientId' in config || 'clientSecret' in config || 'scope' in config
-}
-
-function assertZendeskConfig(config: ZendeskConfig): void {
-    if (hasOAuthField(config)) {
-        if (resolveZendeskAuthMode(config) !== 'bearer') {
-            throw new Error(OAUTH_FIELDS_MESSAGE)
-        }
-        return
-    }
-    const { username, password } = config as ZendeskBasicConfig
-    if (username && password) {
-        return
-    }
-    throw new Error(INVALID_CONFIG_MESSAGE)
 }
 
 function basicAuthorizationHeader(config: ZendeskBasicConfig): string {
@@ -40,21 +12,30 @@ function basicAuthorizationHeader(config: ZendeskBasicConfig): string {
     return `Basic ${credentials}`
 }
 
+function isInvalidTokenError(data: unknown): boolean {
+    return (
+        !!data &&
+        typeof data === 'object' &&
+        (data as { error?: unknown }).error === 'invalid_token'
+    )
+}
+
 export function createHttpAgent(config: ZendeskConfig): AxiosInstance {
-    assertZendeskConfig(config)
+    const auth = resolveZendeskAuth(config)
 
     const baseURL = `https://${config.subdomain}.zendesk.com/api/v2`
     const agent = axios.create({ baseURL })
     const tokenSource =
-        resolveZendeskAuthMode(config) === 'bearer'
-            ? createClientCredentialsTokenSource(config as ZendeskOAuthConfig)
-            : undefined
+        auth.mode === 'bearer' ? createClientCredentialsTokenSource(auth.config) : undefined
+    const basicHeader = auth.mode === 'basic' ? basicAuthorizationHeader(auth.config) : undefined
 
-    agent.interceptors.request.use(async (req) => {
+    agent.interceptors.request.use(async (req: RetriableRequestConfig) => {
         if (tokenSource) {
-            req.headers['Authorization'] = `Bearer ${await tokenSource.getAccessToken()}`
+            const accessToken = await tokenSource.getAccessToken()
+            req.zendeskAccessToken = accessToken
+            req.headers['Authorization'] = `Bearer ${accessToken}`
         } else {
-            req.headers['Authorization'] = basicAuthorizationHeader(config as ZendeskBasicConfig)
+            req.headers['Authorization'] = basicHeader
         }
         req.headers['Content-Type'] = 'application/json'
         req.headers['Accept'] = 'application/json'
@@ -68,12 +49,18 @@ export function createHttpAgent(config: ZendeskConfig): AxiosInstance {
                 if (!axios.isAxiosError(error) || error.response?.status !== 401) {
                     return Promise.reject(error)
                 }
+                // Only retry API requests that were sent with a token Zendesk reports as
+                // invalid/expired. Token-endpoint failures carry no zendeskAccessToken.
                 const original = error.config as RetriableRequestConfig | undefined
-                if (!original || original.zendeskAuthRetried) {
+                if (
+                    !original?.zendeskAccessToken ||
+                    original.zendeskAuthRetried ||
+                    !isInvalidTokenError(error.response.data)
+                ) {
                     return Promise.reject(error)
                 }
                 original.zendeskAuthRetried = true
-                tokenSource.invalidate()
+                tokenSource.invalidate(original.zendeskAccessToken)
                 return agent.request(original)
             },
         )

@@ -52,7 +52,7 @@ new Zendesk({
 })
 ```
 
-`scope` is required by Zendesk. Keep the client secret on the server. This flow does not use a user redirect or a refresh token: the SDK caches the access token and requests a new one when it expires, or when Zendesk responds with 401. The token inherits the permissions of the user who owns the OAuth client.
+`scope` is required by Zendesk. Keep the client secret on the server. This flow does not use a user redirect or a refresh token: the SDK caches the access token and requests a new one when it expires, or when Zendesk rejects it with a 401 `invalid_token` error (the failed request is retried once). Token requests time out after 10 seconds, and token failures are thrown as `AxiosError`s that keep the HTTP status. OAuth fields that are `undefined` or empty are ignored, so Basic auth still works if they are left blank. The token inherits the permissions of the user who owns the OAuth client.
 
 ## API modules
 

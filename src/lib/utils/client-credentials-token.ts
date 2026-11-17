@@ -1,7 +1,14 @@
-import axios from 'axios'
+import axios, { AxiosError } from 'axios'
 import { ZendeskOAuthConfig } from '../zendesk.types'
 
 const EXPIRY_SKEW_MS = 60 * 1000
+const TOKEN_REQUEST_TIMEOUT_MS = 10 * 1000
+
+/**
+ * Dedicated client for the token endpoint so a hung request times out and
+ * interceptors registered on the global axios instance are not applied.
+ */
+export const tokenHttpClient = axios.create({ timeout: TOKEN_REQUEST_TIMEOUT_MS })
 
 type ZendeskTokenResponse = {
     access_token?: string
@@ -15,7 +22,8 @@ type CachedAccessToken = {
 
 export type ClientCredentialsTokenSource = {
     getAccessToken: () => Promise<string>
-    invalidate: () => void
+    /** Clears the cached token, but only if it is still the token that failed. */
+    invalidate: (accessToken: string) => void
 }
 
 export function createClientCredentialsTokenSource(
@@ -49,8 +57,10 @@ export function createClientCredentialsTokenSource(
 
     return {
         getAccessToken,
-        invalidate: () => {
-            cached = undefined
+        invalidate: (accessToken: string) => {
+            if (cached?.accessToken === accessToken) {
+                cached = undefined
+            }
         },
     }
 }
@@ -61,7 +71,7 @@ async function fetchClientCredentialsToken(
 ): Promise<CachedAccessToken> {
     let data: ZendeskTokenResponse
     try {
-        const response = await axios.post<ZendeskTokenResponse>(
+        const response = await tokenHttpClient.post<ZendeskTokenResponse>(
             `https://${config.subdomain}.zendesk.com/oauth/tokens`,
             {
                 grant_type: 'client_credentials',
@@ -78,18 +88,44 @@ async function fetchClientCredentialsToken(
         )
         data = response.data ?? {}
     } catch (error) {
-        throw new Error(tokenFailureMessage(error))
+        throw tokenFailureError(error)
     }
 
     if (typeof data.access_token !== 'string' || data.access_token === '') {
         throw new Error('Zendesk token response did not include an access_token')
     }
 
-    const expiresInSeconds = typeof data.expires_in === 'number' ? data.expires_in : 0
     return {
         accessToken: data.access_token,
-        expiresAt: now + Math.max(0, expiresInSeconds * 1000 - EXPIRY_SKEW_MS),
+        expiresAt: computeExpiresAt(data.expires_in, now),
     }
+}
+
+function computeExpiresAt(expiresIn: unknown, now: number): number {
+    if (typeof expiresIn !== 'number' || !Number.isFinite(expiresIn) || expiresIn <= 0) {
+        // No usable lifetime: keep the token until Zendesk rejects it as invalid_token.
+        return Infinity
+    }
+    const ttlMs = expiresIn * 1000
+    return now + ttlMs - Math.min(EXPIRY_SKEW_MS, ttlMs / 2)
+}
+
+function tokenFailureError(error: unknown): Error {
+    const message = tokenFailureMessage(error)
+    if (axios.isAxiosError(error)) {
+        const wrapped = new AxiosError(
+            message,
+            error.code,
+            error.config,
+            error.request,
+            error.response,
+        )
+        wrapped.cause = error
+        return wrapped
+    }
+    const wrapped: Error & { cause?: unknown } = new Error(message)
+    wrapped.cause = error
+    return wrapped
 }
 
 function tokenFailureMessage(error: unknown): string {
