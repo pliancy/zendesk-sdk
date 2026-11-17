@@ -7,23 +7,49 @@ export type ZendeskBasicConfig = ZendeskConfigBase & {
     password: string
 }
 
-export type ZendeskBearerConfig = ZendeskConfigBase & {
-    getAccessToken: () => Promise<string>
+export type ZendeskOAuthConfig = ZendeskConfigBase & {
+    clientId: string
+    clientSecret: string
+    scope: string
 }
 
-export type ZendeskBearerStaticConfig = ZendeskConfigBase & {
-    accessToken: string
-    getAccessToken?: () => Promise<string>
+export type ZendeskConfig = ZendeskBasicConfig | ZendeskOAuthConfig
+
+export type ZendeskAuth =
+    | { mode: 'basic'; config: ZendeskBasicConfig }
+    | { mode: 'bearer'; config: ZendeskOAuthConfig }
+
+export const INVALID_CONFIG_MESSAGE =
+    'ZendeskConfig must provide clientId, clientSecret, and scope, or both username and password for Basic auth'
+
+export const OAUTH_FIELDS_MESSAGE =
+    'ZendeskConfig client credentials require clientId, clientSecret, and scope'
+
+function isSet(value: unknown): value is string {
+    return typeof value === 'string' && value !== ''
 }
 
-export type ZendeskConfig = ZendeskBasicConfig | ZendeskBearerConfig | ZendeskBearerStaticConfig
+/**
+ * Determines which auth method a config uses. Fields that are undefined or empty
+ * strings are treated as absent. Throws when the config is incomplete.
+ */
+export function resolveZendeskAuth(config: ZendeskConfig): ZendeskAuth {
+    const fields = config as Partial<ZendeskBasicConfig & ZendeskOAuthConfig>
+    const oauthFields = [fields.clientId, fields.clientSecret, fields.scope]
+    const oauthSetCount = oauthFields.filter(isSet).length
 
-export function resolveZendeskAuthMode(config: ZendeskConfig): 'basic' | 'bearer' {
-    if ('getAccessToken' in config && config.getAccessToken != null) {
-        return 'bearer'
+    if (oauthSetCount === oauthFields.length) {
+        return { mode: 'bearer', config: config as ZendeskOAuthConfig }
     }
-    if ('accessToken' in config && config.accessToken != null && config.accessToken !== '') {
-        return 'bearer'
+    if (oauthSetCount > 0) {
+        throw new Error(OAUTH_FIELDS_MESSAGE)
     }
-    return 'basic'
+    if (isSet(fields.username) && isSet(fields.password)) {
+        return { mode: 'basic', config: config as ZendeskBasicConfig }
+    }
+    throw new Error(INVALID_CONFIG_MESSAGE)
+}
+
+export function resolveZendeskAuthMode(config: ZendeskConfig): ZendeskAuth['mode'] {
+    return resolveZendeskAuth(config).mode
 }
