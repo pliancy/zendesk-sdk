@@ -7,22 +7,27 @@ export type ZendeskBasicConfig = ZendeskConfigBase & {
     password: string
 }
 
-export type ZendeskBearerConfig = ZendeskConfigBase & {
-    getAccessToken: () => Promise<string>
+export type ZendeskOAuthConfig = ZendeskConfigBase & {
+    clientId: string
+    clientSecret: string
+    scope: string
 }
 
-export type ZendeskBearerStaticConfig = ZendeskConfigBase & {
-    accessToken: string
-    getAccessToken?: () => Promise<string>
-}
+export type ZendeskConfig = ZendeskBasicConfig | ZendeskOAuthConfig
 
-export type ZendeskConfig = ZendeskBasicConfig | ZendeskBearerConfig | ZendeskBearerStaticConfig
+function hasOAuthCredentials(config: ZendeskConfig): config is ZendeskOAuthConfig {
+    return (
+        'clientId' in config &&
+        'clientSecret' in config &&
+        'scope' in config &&
+        config.clientId !== '' &&
+        config.clientSecret !== '' &&
+        config.scope !== ''
+    )
+}
 
 export function resolveZendeskAuthMode(config: ZendeskConfig): 'basic' | 'bearer' {
-    if ('getAccessToken' in config && config.getAccessToken != null) {
-        return 'bearer'
-    }
-    if ('accessToken' in config && config.accessToken != null && config.accessToken !== '') {
+    if (hasOAuthCredentials(config)) {
         return 'bearer'
     }
     return 'basic'

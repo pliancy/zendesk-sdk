@@ -1,42 +1,42 @@
-import axios, { AxiosInstance } from 'axios'
-import { ZendeskConfig } from '../zendesk.types'
+import axios, { AxiosInstance, InternalAxiosRequestConfig } from 'axios'
+import {
+    ZendeskBasicConfig,
+    ZendeskConfig,
+    ZendeskOAuthConfig,
+    resolveZendeskAuthMode,
+} from '../zendesk.types'
+import { createClientCredentialsTokenSource } from './client-credentials-token'
 
 const INVALID_CONFIG_MESSAGE =
-    'ZendeskConfig must provide either getAccessToken, accessToken, or both username and password for Basic auth'
+    'ZendeskConfig must provide clientId, clientSecret, and scope, or both username and password for Basic auth'
+
+const OAUTH_FIELDS_MESSAGE =
+    'ZendeskConfig client credentials require clientId, clientSecret, and scope'
+
+type RetriableRequestConfig = InternalAxiosRequestConfig & {
+    zendeskAuthRetried?: boolean
+}
+
+function hasOAuthField(config: ZendeskConfig): boolean {
+    return 'clientId' in config || 'clientSecret' in config || 'scope' in config
+}
 
 function assertZendeskConfig(config: ZendeskConfig): void {
-    if ('getAccessToken' in config && config.getAccessToken != null) {
-        if (typeof config.getAccessToken !== 'function') {
-            throw new Error('ZendeskConfig getAccessToken must be a function')
+    if (hasOAuthField(config)) {
+        if (resolveZendeskAuthMode(config) !== 'bearer') {
+            throw new Error(OAUTH_FIELDS_MESSAGE)
         }
         return
     }
-    if ('accessToken' in config && config.accessToken != null && config.accessToken !== '') {
-        if (typeof config.accessToken !== 'string') {
-            throw new Error('ZendeskConfig accessToken must be a string')
-        }
-        return
-    }
-    const { username, password } = config as { username?: string; password?: string }
-    if (username != null && password != null && username !== '' && password !== '') {
+    const { username, password } = config as ZendeskBasicConfig
+    if (username && password) {
         return
     }
     throw new Error(INVALID_CONFIG_MESSAGE)
 }
 
-async function resolveAuthorizationHeader(config: ZendeskConfig): Promise<string> {
-    if ('getAccessToken' in config && config.getAccessToken != null) {
-        const token = await config.getAccessToken()
-        if (!token) {
-            throw new Error('ZendeskConfig getAccessToken returned an empty token')
-        }
-        return `Bearer ${token}`
-    }
-    if ('accessToken' in config && config.accessToken != null && config.accessToken !== '') {
-        return `Bearer ${config.accessToken}`
-    }
-    const { username, password } = config as { username: string; password: string }
-    const credentials = Buffer.from(`${username}:${password}`).toString('base64')
+function basicAuthorizationHeader(config: ZendeskBasicConfig): string {
+    const credentials = Buffer.from(`${config.username}:${config.password}`).toString('base64')
     return `Basic ${credentials}`
 }
 
@@ -45,13 +45,39 @@ export function createHttpAgent(config: ZendeskConfig): AxiosInstance {
 
     const baseURL = `https://${config.subdomain}.zendesk.com/api/v2`
     const agent = axios.create({ baseURL })
+    const tokenSource =
+        resolveZendeskAuthMode(config) === 'bearer'
+            ? createClientCredentialsTokenSource(config as ZendeskOAuthConfig)
+            : undefined
 
     agent.interceptors.request.use(async (req) => {
-        req.headers['Authorization'] = await resolveAuthorizationHeader(config)
+        if (tokenSource) {
+            req.headers['Authorization'] = `Bearer ${await tokenSource.getAccessToken()}`
+        } else {
+            req.headers['Authorization'] = basicAuthorizationHeader(config as ZendeskBasicConfig)
+        }
         req.headers['Content-Type'] = 'application/json'
         req.headers['Accept'] = 'application/json'
         return req
     })
+
+    if (tokenSource) {
+        agent.interceptors.response.use(
+            (response) => response,
+            async (error: unknown) => {
+                if (!axios.isAxiosError(error) || error.response?.status !== 401) {
+                    return Promise.reject(error)
+                }
+                const original = error.config as RetriableRequestConfig | undefined
+                if (!original || original.zendeskAuthRetried) {
+                    return Promise.reject(error)
+                }
+                original.zendeskAuthRetried = true
+                tokenSource.invalidate()
+                return agent.request(original)
+            },
+        )
+    }
 
     return agent
 }

@@ -15,8 +15,9 @@ import { Zendesk } from '@pliancy/zendesk-sdk'
 
 const zendesk = new Zendesk({
   subdomain: 'your-subdomain',
-  username: 'you@example.com/token',
-  password: 'your-api-token',
+  clientId: 'YOUR_CLIENT_ID',
+  clientSecret: 'YOUR_CLIENT_SECRET',
+  scope: 'read',
 })
 
 const users = await zendesk.users.search('email:you@example.com')
@@ -24,7 +25,7 @@ const users = await zendesk.users.search('email:you@example.com')
 
 ## Authentication
 
-Zendesk is [removing API tokens as an authentication method for API requests](https://support.zendesk.com/hc/en-us/articles/10851263566234-Announcing-the-removal-of-API-tokens-as-an-authentication-method-for-API-requests). **Functional and security updates (including new API tokens) for third-party integrations must migrate to OAuth by April 30, 2027.** New integrations should use OAuth Bearer; Basic API token auth remains supported in this SDK for backward compatibility during migration.
+Zendesk is [removing API tokens as an authentication method for API requests](https://support.zendesk.com/hc/en-us/articles/10851263566234-Announcing-the-removal-of-API-tokens-as-an-authentication-method-for-API-requests). **Functional and security updates (including new API tokens) for third-party integrations must migrate to OAuth by April 30, 2027.** New integrations should use OAuth client credentials. Basic API token auth remains supported in this SDK for backward compatibility during migration.
 
 ### Basic (API token) — legacy / transitional
 
@@ -38,27 +39,20 @@ new Zendesk({
 
 The SDK sends `Authorization: Basic …` on each request.
 
-### Bearer (OAuth) — recommended
+### OAuth (client credentials) — recommended
 
-The SDK does **not** call `POST /oauth/tokens`. Your application mints and caches access tokens (for example [client credentials](https://developer.zendesk.com/documentation/authentication/api-tokens-to-oauth/)) and supplies them to the SDK:
-
-```typescript
-new Zendesk({
-  subdomain: 'your-subdomain',
-  getAccessToken: () => tokenProvider.getAccessToken(),
-})
-```
-
-For tests or short-lived scripts you can pass a static token:
+Pass the OAuth client id, client secret, and scope. The SDK requests an access token with the [client credentials flow](https://developer.zendesk.com/documentation/authentication/api-tokens-to-oauth/) and sends `Authorization: Bearer …` on each API request.
 
 ```typescript
 new Zendesk({
   subdomain: 'your-subdomain',
-  accessToken: 'oauth-access-token',
+  clientId: 'YOUR_CLIENT_ID',
+  clientSecret: 'YOUR_CLIENT_SECRET',
+  scope: 'read', // or a space-separated list, e.g. 'tickets:read users:read'
 })
 ```
 
-When `getAccessToken` is provided, it is invoked before each API request and the SDK sends `Authorization: Bearer …`.
+`scope` is required by Zendesk. Keep the client secret on the server. This flow does not use a user redirect or a refresh token: the SDK caches the access token and requests a new one when it expires, or when Zendesk responds with 401. The token inherits the permissions of the user who owns the OAuth client.
 
 ## API modules
 
