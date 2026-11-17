@@ -354,6 +354,34 @@ describe('createHttpAgent', () => {
             expect(post).toHaveBeenCalledTimes(1)
         })
 
+        it('refreshes the token when WWW-Authenticate reports invalid_token', async () => {
+            const post = jest
+                .spyOn(tokenHttpClient, 'post')
+                .mockResolvedValueOnce(tokenResponse('first-token', 3600))
+                .mockResolvedValueOnce(tokenResponse('second-token', 3600))
+            const agent = createHttpAgent(oauthConfig)
+            const authorizations: string[] = []
+            agent.defaults.adapter = async (reqConfig) => {
+                const authorization = readAuthorization(reqConfig.headers) ?? ''
+                authorizations.push(authorization)
+                if (authorization === 'Bearer first-token') {
+                    const error = unauthorized(reqConfig, { error: "Couldn't authenticate you" })
+                    if (error.response) {
+                        error.response.headers = {
+                            'www-authenticate': 'Bearer realm="Zendesk", error="invalid_token"',
+                        }
+                    }
+                    return Promise.reject(error)
+                }
+                return ok(reqConfig)
+            }
+
+            await agent.get('/users/me.json')
+
+            expect(post).toHaveBeenCalledTimes(2)
+            expect(authorizations).toEqual(['Bearer first-token', 'Bearer second-token'])
+        })
+
         it('reuses a newer cached token when a stale request gets a 401', async () => {
             const post = jest
                 .spyOn(tokenHttpClient, 'post')

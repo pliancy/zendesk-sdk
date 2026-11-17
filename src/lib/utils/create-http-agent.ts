@@ -1,4 +1,9 @@
-import axios, { AxiosInstance, InternalAxiosRequestConfig } from 'axios'
+import axios, {
+    AxiosHeaders,
+    AxiosInstance,
+    AxiosResponse,
+    InternalAxiosRequestConfig,
+} from 'axios'
 import { ZendeskBasicConfig, ZendeskConfig, resolveZendeskAuth } from '../zendesk.types'
 import { createClientCredentialsTokenSource } from './client-credentials-token'
 
@@ -12,12 +17,20 @@ function basicAuthorizationHeader(config: ZendeskBasicConfig): string {
     return `Basic ${credentials}`
 }
 
-function isInvalidTokenError(data: unknown): boolean {
-    return (
-        !!data &&
-        typeof data === 'object' &&
-        (data as { error?: unknown }).error === 'invalid_token'
-    )
+/**
+ * Zendesk documents expired-token 401s as `{"error":"invalid_token"}` in the body.
+ * Also accept the RFC 6750 `WWW-Authenticate: Bearer error="invalid_token"` header.
+ */
+function isInvalidTokenResponse(response: AxiosResponse): boolean {
+    const data = response.data as { error?: unknown } | undefined
+    if (data && typeof data === 'object' && data.error === 'invalid_token') {
+        return true
+    }
+    const header: unknown =
+        response.headers instanceof AxiosHeaders
+            ? response.headers.get('www-authenticate')
+            : (response.headers as Record<string, unknown> | undefined)?.['www-authenticate']
+    return typeof header === 'string' && /error\s*=\s*"?invalid_token"?/i.test(header)
 }
 
 export function createHttpAgent(config: ZendeskConfig): AxiosInstance {
@@ -55,7 +68,7 @@ export function createHttpAgent(config: ZendeskConfig): AxiosInstance {
                 if (
                     !original?.zendeskAccessToken ||
                     original.zendeskAuthRetried ||
-                    !isInvalidTokenError(error.response.data)
+                    !isInvalidTokenResponse(error.response)
                 ) {
                     return Promise.reject(error)
                 }
