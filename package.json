@@ -62,7 +62,7 @@
     "email": "dev@pliancy.com"
   },
   "volta": {
-    "node": "24.18.0",
+    "node": "26.13.1",
     "yarn": "1.22.22"
   },
   "config": {
